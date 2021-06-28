@@ -1,0 +1,8 @@
+torchtoolbox==0.1.5
+torchvision==0.9.1+cu111
+tqdm==4.61.0
+torch==1.8.1+cu111
+numpy==1.20.3
+torchviz==0.0.2
+asposestorage==1.0.2
+tensorboardX==2.3

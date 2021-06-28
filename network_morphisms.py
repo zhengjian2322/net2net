@@ -1,10 +1,5 @@
-import glob
 import os
-import shutil
 from copy import deepcopy
-import random
-import datetime
-
 import torch
 
 import numpy as np
@@ -17,10 +12,11 @@ from utils import GenerateNet
 
 
 class NetworkMorphisms(object):
-    def __init__(self, model_config=None, ):
-        self.teacher_config = model_config
-        self.student_config = model_config
-        self.teacher_weights = None
+    def __init__(self, in_channels=3, picture_size=(32, 32)):
+        self.in_channels = in_channels
+        self.picture_size = picture_size
+        self.teacher_config = None
+        self.student_config = None
         self.teacher = None
         self.student = None
 
@@ -28,54 +24,23 @@ class NetworkMorphisms(object):
         self.train_loader, self.test_loader = data_loader(train_batch_size=128, test_batch_size=100)
 
     def load_teacher(self, model_path):
+        """
+        load teacher network from check point file
+        """
         assert os.path.isfile(model_path), 'The model path does not exist'
         check_point = torch.load(model_path)
         self.teacher = GenerateNet(check_point['model_config'])
         self.teacher_config = check_point['model_config']
         self.teacher.load_state_dict(check_point['model_state_dict'])
 
-    def _train(self, epoch, optimizer, loss_func):
-        self.teacher.train()
-        train_loss, correct, total = 0, 0, 0
-        with tqdm(total=len(self.train_loader), desc='train epoch %d' % epoch, colour='black') as t_train:
-            for step, (train_x, train_y) in enumerate(self.train_loader):
-                train_x, train_y = train_x.to(self.device), train_y.to(self.device)
-                optimizer.zero_grad()
-                output = self.teacher(train_x)
-                loss = loss_func(output, train_y)
-                loss.backward()
-                optimizer.step()
-                train_loss += loss.item()
-                total += train_y.size(0)
-                _, predict = output.max(1)
-                correct += predict.eq(train_y).sum().item()
-                t_train.set_postfix({'step': step, 'length of train': len(self.train_loader),
-                                     'Loss': '%.3f' % (train_loss / (step + 1)),
-                                     'Acc': '%.3f%% (%d/%d)' % (100. * correct / total, correct, total)})
-                t_train.update(1)
-
-    def _eval(self, epoch, loss_func):
-        self.teacher.eval()
-        test_loss, correct, total = 0, 0, 0
-        with torch.no_grad():
-            with tqdm(total=len(self.test_loader), desc='eval epoch %d' % epoch, colour='black') as t:
-                for step, (test_x, test_y) in enumerate(self.test_loader):
-                    test_x, test_y = test_x.to(self.device), test_y.to(self.device)
-                    output = self.teacher(test_x)
-                    loss = loss_func(output, test_y)
-                    test_loss += loss
-                    _, predict = output.max(1)
-                    total += test_y.size(0)
-                    correct += predict.eq(test_y).sum().item()
-                    t.set_postfix({'step': step, 'length of eval': len(self.test_loader),
-                                   'Loss': '%.3f' % (test_loss / (step + 1)),
-                                   'Acc': '%.3f%% (%d/%d)' % (100. * correct / total, correct, total)})
-                    t.update(1)
-        return correct, total
-
-    def initial_network(self, epochs=20, lr=0.05, model_folder=''):
-        assert self.teacher_config, 'model_config is None'
-        self.teacher = GenerateNet(self.teacher_config)
+    def initial_network(self, epochs=20, lr=0.05, model_folder='', model_config=None):
+        """
+        Initialize the network as the basic network
+        """
+        if model_config is None:
+            model_config = deepcopy(se_init_config)
+        self.teacher_config = model_config
+        self.teacher = GenerateNet(model_config)
         self.teacher = self.teacher.to(self.device)
 
         optimizer = optim.SGD(params=self.teacher.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
@@ -84,7 +49,6 @@ class NetworkMorphisms(object):
 
         best_acc = 0
         for epoch in range(epochs):
-
             self._train(epoch, optimizer, loss_func)
             correct, total = self._eval(epoch, loss_func)
             acc = correct / total
@@ -93,7 +57,7 @@ class NetworkMorphisms(object):
                 best_acc = acc
             scheduler.step()
 
-    def train(self, epochs=17, lr=0.05, folder='./'):
+    def train(self, epochs=17, lr=0.05, save_folder='./'):
         optimizer = optim.SGD(params=self.teacher.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         loss_func = torch.nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=8)
@@ -105,19 +69,8 @@ class NetworkMorphisms(object):
             acc = correct / total
             run_history.append(acc)
             scheduler.step()
-        self.save_model(np.mean(run_history[-3:]), self.teacher.state_dict(), self.teacher_config, folder)
+        self.save_model(np.mean(run_history[-3:]), self.teacher.state_dict(), self.teacher_config, save_folder)
         return run_history
-
-    @staticmethod
-    def save_model(acc, model_state_dict, model_config, folder):
-        check_point = {
-            'best_acc': acc,
-            'model_state_dict': model_state_dict,
-            'model_config': model_config
-        }
-        if not os.path.isdir(folder):
-            os.mkdir(folder)
-        torch.save(check_point, os.path.join(folder, 'model.pkl'))
 
     def change_teacher(self, student_weight):
         self.teacher = GenerateNet(self.student_config)
@@ -125,6 +78,9 @@ class NetworkMorphisms(object):
         self.teacher.load_state_dict(student_weight)
 
     def generate_node_name(self, name):
+        """
+        Generate a new node name
+        """
         same_node = 0
         for node_name in self.student_config:
             if name in node_name:
@@ -132,7 +88,9 @@ class NetworkMorphisms(object):
         return name + str(same_node + 1)
 
     def add(self, node_index: int):
-
+        """
+        Create add modification
+        """
         self.student_config = deepcopy(self.teacher_config)
         student_weight = self.teacher.state_dict()
         nodes_list = self.get_nodes_list()
@@ -454,7 +412,49 @@ class NetworkMorphisms(object):
         if change_teacher:
             self.change_teacher(student_weight)
 
+    def _train(self, epoch, optimizer, loss_func):
+        self.teacher.train()
+        train_loss, correct, total = 0, 0, 0
+        with tqdm(total=len(self.train_loader), desc='train epoch %d' % epoch, colour='black') as t_train:
+            for step, (train_x, train_y) in enumerate(self.train_loader):
+                train_x, train_y = train_x.to(self.device), train_y.to(self.device)
+                optimizer.zero_grad()
+                output = self.teacher(train_x)
+                loss = loss_func(output, train_y)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                total += train_y.size(0)
+                _, predict = output.max(1)
+                correct += predict.eq(train_y).sum().item()
+                t_train.set_postfix({'step': step, 'length of train': len(self.train_loader),
+                                     'Loss': '%.3f' % (train_loss / (step + 1)),
+                                     'Acc': '%.3f%% (%d/%d)' % (100. * correct / total, correct, total)})
+                t_train.update(1)
+
+    def _eval(self, epoch, loss_func):
+        self.teacher.eval()
+        test_loss, correct, total = 0, 0, 0
+        with torch.no_grad():
+            with tqdm(total=len(self.test_loader), desc='eval epoch %d' % epoch, colour='black') as t:
+                for step, (test_x, test_y) in enumerate(self.test_loader):
+                    test_x, test_y = test_x.to(self.device), test_y.to(self.device)
+                    output = self.teacher(test_x)
+                    loss = loss_func(output, test_y)
+                    test_loss += loss
+                    _, predict = output.max(1)
+                    total += test_y.size(0)
+                    correct += predict.eq(test_y).sum().item()
+                    t.set_postfix({'step': step, 'length of eval': len(self.test_loader),
+                                   'Loss': '%.3f' % (test_loss / (step + 1)),
+                                   'Acc': '%.3f%% (%d/%d)' % (100. * correct / total, correct, total)})
+                    t.update(1)
+        return correct, total
+
     def replace_student_node_inbound(self, node_list, nodes_index, original_inbound_node_name, new_inbound_node_name):
+        """
+        Replace the old inbound node of the nodes with the new inbound node name
+        """
         for index in nodes_index:
             for idx, element in enumerate(self.student_config[node_list[index][0]]['inbound_nodes']):
                 if element == original_inbound_node_name:
@@ -476,23 +476,10 @@ class NetworkMorphisms(object):
                 next_node.append(i)
         return list(next_node)
 
-    @staticmethod
-    def get_conv_bn_relu(nodes_list, node_index):
-        node_name = nodes_list[node_index][0]
-
-        assert 'conv' in node_name, 'Wrong layer index'
-        bn_index, bn_name, relu_index, relu_name = None, None, None, None
-        for idx, node in enumerate(nodes_list):
-            if node[1] == node_name and 'bn' in node[0]:
-                bn_index, bn_name = idx, node[0]
-        for idx, node in enumerate(nodes_list):
-            if node[1] == bn_name and 'relu' in node[0]:
-                relu_index, relu_name = idx, node[0]
-        assert all([bn_index, bn_name, relu_index,
-                    relu_name]), 'bn_index or  bn_name or relu_index or relu_name must not be None'
-        return node_name, bn_index, bn_name, relu_index, relu_name
-
     def return_available_nodes(self):
+        """
+        Before the network morphism, we will check the correspondence between points and operations
+        """
         wider2net_conv2d = []
         deeper2net_conv2d = []
         wider2net_conv2d_fc = []
@@ -566,126 +553,41 @@ class NetworkMorphisms(object):
 
         return available
 
-    def number_of_student_parameter(self):
+    @staticmethod
+    def get_conv_bn_relu(nodes_list, node_index):
+        node_name = nodes_list[node_index][0]
+
+        assert 'conv' in node_name, 'Wrong layer index'
+        bn_index, bn_name, relu_index, relu_name = None, None, None, None
+        for idx, node in enumerate(nodes_list):
+            if node[1] == node_name and 'bn' in node[0]:
+                bn_index, bn_name = idx, node[0]
+        for idx, node in enumerate(nodes_list):
+            if node[1] == bn_name and 'relu' in node[0]:
+                relu_index, relu_name = idx, node[0]
+        assert all([bn_index, bn_name, relu_index,
+                    relu_name]), 'bn_index or  bn_name or relu_index or relu_name must not be None'
+        return node_name, bn_index, bn_name, relu_index, relu_name
+
+    @staticmethod
+    def save_model(acc, model_state_dict, model_config, folder):
+        check_point = {
+            'best_acc': acc,
+            'model_state_dict': model_state_dict,
+            'model_config': model_config
+        }
+        if not os.path.isdir(folder):
+            os.mkdir(folder)
+        torch.save(check_point, os.path.join(folder, 'model.pkl'))
+
+    def number_of_parameter(self):
         return sum(p.numel() for p in self.teacher.parameters())
 
     def plot_model(self, folder):
-        torch.onnx.export(self.teacher, torch.rand(12, 3, 32, 32), folder + 'model.onnx')
-
-
-class Organism(object):
-    def __init__(self, number, epoch=''):
-        self.number = number
-        self.folder = epoch + 'model' + str(self.number) + '/'
-        if os.path.isdir(self.folder[:-1]):
-            shutil.rmtree(self.folder)
-            os.mkdir(self.folder)
-        else:
-            os.mkdir(self.folder)
-        self.model = NetworkMorphisms()
-
-    def random_modification(self):
-        # Select random modification
-        available_modifications = self.model.return_available_nodes()
-        while True:
-            random_modification = random.choice(list(available_modifications.keys()))
-            if len(available_modifications[random_modification]) > 0:
-                break
-        random_index = random.choice(list(available_modifications[random_modification]))
-        print(random_modification, random_index)
-        function = getattr(self.model, random_modification)
-        function(random_index)
-        self.model.plot_model(self.folder)
-        return random_modification
-
-    def train(self, epochs=17, lr=0.05, folder='./'):
-        return self.model.train(epochs, lr, folder)
-
-
-class HillClimb(object):
-    def __init__(self, number_of_organism, epochs, load_model_path):
-        self.number_of_organism = number_of_organism
-        self.epochs = epochs
-        self.load_model_path = load_model_path
-
-    def start(self):
-        model_dirs = glob.glob('model*/')
-        for model_dir in model_dirs:
-            shutil.rmtree(model_dir)
-        if os.path.isdir('best'):
-            shutil.rmtree('best')
-            os.mkdir('best')
-        else:
-            os.mkdir('best')
-        shutil.copyfile(self.load_model_path, 'best/model.pkl')
-
-        previous_best = -1
-        for epoch in range(self.epochs):
-            print('\nEpoch %d' % epoch)
-            list_of_organisms = []
-            list_of_result = []
-            for i in range(self.number_of_organism):
-                list_of_organisms.append(Organism(i))
-            for i in range(self.number_of_organism):
-                while True:
-                    print('\nModel loading %d' % i)
-                    list_of_organisms[i].model.load_teacher(model_path='best/model.pkl')
-                    if i == 0:
-                        list_of_organisms[i].model.plot_model(list_of_organisms[i].folder)
-                        break
-                    modifications = []
-                    number_of_modifications = 3
-                    '''Select random modifications'''
-                    for _ in range(number_of_modifications):
-                        modification = list_of_organisms[i].random_modification()
-                        modifications.append(modification)
-                    print('Organism %d: modifications: %s' % (i, modifications))
-                    if list_of_organisms[i].model.number_of_student_parameter() < 50000000:
-                        print('Number of parameters: %d' % list_of_organisms[i].model.number_of_student_parameter())
-                        break
-                    else:
-                        print('Repeat drawing of network morphism function: %d' % list_of_organisms[
-                            i].model.number_of_student_parameter())
-
-                history = list_of_organisms[i].train(epochs=17, lr=0.05, folder=list_of_organisms[i].folder)
-                # TODO: With what to evaluate
-                organism_result = np.mean(history[-3:])
-                list_of_result.append(organism_result)
-                print('Organism %d result: %f' % (i, list_of_result[i]))
-            best = list_of_result.index(max(list_of_result))
-            print('\n=======\nBest: %d, result: %f, previous: %f\n=====' % (best, list_of_result[best], previous_best))
-            if max(list_of_result) > previous_best:
-                shutil.copyfile(list_of_organisms[best].folder + 'model.pkl', 'best/model.pkl')
-
-                if os.path.exists(list_of_organisms[best].folder + 'model.onnx'):
-                    shutil.copyfile(list_of_organisms[best].folder + 'model.onnx', 'best/model.onnx')
-                previous_best = max(list_of_result)
-            else:
-                shutil.copyfile(list_of_organisms[0].folder + 'model.pkl', 'best/model.pkl')
-
-                if os.path.exists(list_of_organisms[0].folder + 'model.onnx'):
-                    shutil.copyfile(list_of_organisms[0].folder + 'model.onnx', 'best/model.onnx')
-
-            with open('best/results.txt', 'a') as result_file:
-                result_file.write(str(datetime.datetime.now()))
-                for i in range(self.number_of_organism):
-                    result_file.write('Epoch: %d, organism %d accuracy: %f\n' % (epoch, i, list_of_result[i]))
-                result_file.write('Epoch: %d, best accuracy: %f\n\n\n' % (epoch, list_of_result[best]))
-
-
-if __name__ == '__main__':
-    model = NetworkMorphisms(se_init_config)
-    model.initial_network(epochs=20, model_folder='initial/')
-    evolution = HillClimb(number_of_organism=8, epochs=8, load_model_path='initial/model.pkl')
-    evolution.start()
-    model = NetworkMorphisms()
-    model.load_teacher(model_path='best/model.pkl')
-
-    model.teacher.summary()
-    train_history = model.train(epochs=200, lr=0.005, folder='test')
-    with open('final_result.txt', 'w') as f:
-        f.write('%.4f' % max(train_history))
-    print(max(train_history))
+        if not os.path.isdir(folder):
+            os.mkdir(folder)
+        torch.onnx.export(self.teacher, torch.rand(1, self.in_channels, self.picture_size[0], self.picture_size[1]),
+                          folder + 'model.onnx')
 
 # if __name__ == '__main__':
 #     model = SEModel(se_init_config)
