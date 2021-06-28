@@ -1,0 +1,5 @@
+torchtoolbox==0.1.5
+torch==1.8.1+cu111
+tqdm==4.61.0
+numpy==1.20.3
+torchvision==0.9.1+cu111
