@@ -43,7 +43,7 @@ class HillClimb(object):
         self.epochs = epochs
         self.load_model_path = load_model_path
 
-    def start(self):
+    def start(self, number_of_modifications=3, organisms_train_epochs=17, organisms_train_lr=0.005):
         model_dirs = glob.glob('model*/')
         for model_dir in model_dirs:
             shutil.rmtree(model_dir)
@@ -69,7 +69,6 @@ class HillClimb(object):
                         list_of_organisms[i].model.plot_model(list_of_organisms[i].folder)
                         break
                     modifications = []
-                    number_of_modifications = 3
                     # Select random modifications
                     for _ in range(number_of_modifications):
                         modification = list_of_organisms[i].random_modification()
@@ -82,7 +81,8 @@ class HillClimb(object):
                         print('Repeat drawing of network morphism function: %d' % list_of_organisms[
                             i].model.number_of_parameter())
 
-                history = list_of_organisms[i].train(epochs=17, lr=0.05, save_folder=list_of_organisms[i].folder)
+                history = list_of_organisms[i].train(epochs=organisms_train_epochs, lr=organisms_train_lr,
+                                                     save_folder=list_of_organisms[i].folder)
                 # TODO: With what to evaluate
                 organism_result = np.mean(history[-3:])
                 list_of_result.append(organism_result)

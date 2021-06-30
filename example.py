@@ -10,10 +10,10 @@ def initial_network():
 
 def hill_climb():
     evolution = HillClimb(number_of_organism=8, epochs=8, load_model_path='initial/model.pkl')
-    evolution.start()
-    evolution.eval()
+    evolution.start(organisms_train_epochs=17)
+    evolution.eval(epochs=100)
 
 
 if __name__ == '__main__':
-    # initial_network()
+    initial_network()
     hill_climb()
