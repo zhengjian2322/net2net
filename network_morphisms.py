@@ -11,15 +11,17 @@ from network_config import se_init_config
 from utils import GenerateNet
 
 
+
+
 class NetworkMorphisms(object):
     def __init__(self, in_channels=3, picture_size=(32, 32)):
+        # in_channels=se_init_config?
         self.in_channels = in_channels
         self.picture_size = picture_size
         self.teacher_config = None
-        self.student_config = None
+        self.student_config = None  
         self.teacher = None
         self.student = None
-
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         self.train_loader, self.test_loader = data_loader(train_batch_size=128, test_batch_size=100)
 
@@ -46,13 +48,18 @@ class NetworkMorphisms(object):
         optimizer = optim.SGD(params=self.teacher.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         loss_func = torch.nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=8)
+        # scheduler=optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=8,T_mult=2)
 
         best_acc = 0
         for epoch in range(epochs):
             self._train(epoch, optimizer, loss_func)
             correct, total = self._eval(epoch, loss_func)
             acc = correct / total
+            # ? 
             if acc > best_acc:
+                # best_acc=acc
+                # self.save_model(best_acc, self.teacher.state_dict(), self.teacher_config, model_folder)
+                
                 self.save_model(best_acc, self.teacher.state_dict(), self.teacher_config, model_folder)
                 best_acc = acc
             scheduler.step()
@@ -89,7 +96,7 @@ class NetworkMorphisms(object):
 
     def add(self, node_index: int):
         """
-        Create add modification
+        Create add modification 
         """
         self.student_config = deepcopy(self.teacher_config)
         student_weight = self.teacher.state_dict()
@@ -115,18 +122,18 @@ class NetworkMorphisms(object):
         add1 = self.generate_node_name('add')
         self.student_config[add1] = {'config': '', 'inbound_nodes': [lambda1, lambda2]}
 
-        next_nodes_index = self.get_next_nodes(relu_index)
+        next_nodes_index = self.get_next_nodes(relu_index)# 从teacher的node_list中，找到relu的后续节点
         self.replace_student_node_inbound(nodes_list, next_nodes_index, relu_name, add1)
 
         self.student = GenerateNet(self.student_config)
         node_weight = student_weight[node_name + '.weight']
         student_weight[conv1 + '.weight'] = node_weight + np.random.normal(scale=node_weight.std() * 0.01,
                                                                            size=node_weight.shape)
-        student_weight[conv1 + '.bias'] = student_weight[node_name + '.bias']
-        student_weight[bn1 + '.weight'] = student_weight[bn_name + '.weight']
-        student_weight[bn1 + '.bias'] = student_weight[bn_name + '.bias']
-        student_weight[bn1 + '.running_mean'] = student_weight[bn_name + '.running_mean']
-        student_weight[bn1 + '.running_var'] = student_weight[bn_name + '.running_var']
+        student_weight[conv1 + '.bias'] = student_weight[node_name + '.bias']#?
+        student_weight[bn1 + '.weight'] = student_weight[bn_name + '.weight']#?
+        student_weight[bn1 + '.bias'] = student_weight[bn_name + '.bias']#?
+        student_weight[bn1 + '.running_mean'] = student_weight[bn_name + '.running_mean']#?
+        student_weight[bn1 + '.running_var'] = student_weight[bn_name + '.running_var']#?
         self.student.load_state_dict(student_weight)
 
         self.change_teacher(student_weight)
@@ -168,7 +175,7 @@ class NetworkMorphisms(object):
         # student_weight[conv1 + '.weight'] = student_weight[node_name + ".weight"][:int(filters / 2), :, :, :]
         student_weight[conv1 + '.bias'] = student_weight[node_name + ".bias"][:int(filters / 2)]
 
-        student_weight[node_name + '.weight'] = student_weight[node_name + '.weight'][int(filters / 2):, :, :, :]
+        student_weight[node_name + '.weight'] = student_weight[node_name + '.weight'][int(filters / 2):, :, :, :]# ?
         student_weight[node_name + '.bias'] = student_weight[node_name + '.bias'][int(filters / 2):]
 
         student_weight[bn1 + '.weight'] = student_weight[bn_name + '.weight'][:int(filters / 2)]
@@ -211,14 +218,14 @@ class NetworkMorphisms(object):
         alpha, beta, mean, std = student_weight[bn_name + '.weight'], student_weight[bn_name + '.bias'], student_weight[
             bn_name + '.running_mean'], student_weight[bn_name + '.running_var']
         teacher_w2, teacher_b2 = student_weight[next_node_name + '.weight'], student_weight[next_node_name + '.bias']
-
-        original_filters = teacher_w1.shape[0]
+        # ? teacher_b2
+        original_filters = teacher_w1.shape[0] # 一个conv层的权重[out_channels,in_channels,kh,kw]
         if new_width is None:
             new_width = self.student_config[node_name]['config']['out_channels'] * 2
         n = new_width - original_filters
         assert n > 0, "New width smaller than teacher width"
         index = np.random.randint(original_filters, size=n)
-        factors = np.bincount(index)[index] + 1.
+        factors = np.bincount(index)[index] + 1.# 除了新增的channel，还有原有的channel，故加1
         new_w1 = teacher_w1[index, :, :, :]
         new_b1 = teacher_b1[index]
         new_w2 = (teacher_w2[:, index, :, :] / torch.from_numpy(factors.reshape((1, -1, 1, 1))).to(teacher_w2.device))
@@ -229,17 +236,17 @@ class NetworkMorphisms(object):
         new_std = std[index]
 
         new_w1 = new_w1 + np.random.normal(scale=new_w1.std() * 0.05, size=new_w1.shape)
-        student_w1 = torch.cat((teacher_w1, new_w1), 0)
-        student_b1 = torch.cat((teacher_b1, new_b1), 0)
+        student_w1 = torch.cat((teacher_w1, new_w1), 0)# teacher_w1是student_weight[node_name + '.weight']的引用 ?
+        student_b1 = torch.cat((teacher_b1, new_b1), 0)# ?
 
-        alpha = torch.cat((alpha, new_alpha))
-        beta = torch.cat((beta, new_beta))
-        mean = torch.cat((mean, new_mean))
-        std = torch.cat((std, new_std))
+        alpha = torch.cat((alpha, new_alpha))# ?
+        beta = torch.cat((beta, new_beta))# ?
+        mean = torch.cat((mean, new_mean))# ?
+        std = torch.cat((std, new_std))# ?
         new_w2 = new_w2 + np.random.normal(scale=new_w2.std() * 0.05, size=new_w2.shape)
 
-        student_w2 = torch.cat((teacher_w2, new_w2), 1)
-        student_w2[:, index, :, :] = new_w2
+        student_w2 = torch.cat((teacher_w2, new_w2), 1)# ?
+        student_w2[:, index, :, :] = new_w2 #调整被重复使用的filter的权重 # ?
 
         self.student_config[node_name]['config']['out_channels'] = new_width
         self.student_config[bn_name]['config']['input_size'] = new_width
@@ -285,13 +292,13 @@ class NetworkMorphisms(object):
             new_width = self.student_config[node_name]['config']['out_channels'] * 2
         n = new_width - original_filters
         assert n > 0, "New width smaller than teacher width"
-
+        
         index = np.random.randint(original_filters, size=n)
         factors = np.bincount(index)[index] + 1.
         new_w1 = teacher_w1[index, :, :, :]
         new_b1 = teacher_b1[index]
 
-        new_w2 = teacher_w2.T
+        new_w2 = teacher_w2.T# ? self.student_config[next_node_name]['config']['input_size']  teacher_w2.reshpae((10,256,8,8))
         new_w2 = new_w2[index, :] / factors.reshape((-1, 1))
 
         new_alpha = alpha[index]
@@ -309,7 +316,7 @@ class NetworkMorphisms(object):
         student_b1 = torch.cat((teacher_b1, new_b1))
         new_w2 = new_w2 + np.random.normal(scale=new_w2.std() * 0.05, size=new_w2.shape)
         student_w2 = torch.cat((teacher_w2.T, new_w2))
-        student_w2[index, :] = new_w2
+        student_w2[index, :] = new_w2 #student_w2.reshape((10,-1))
         student_w2 = student_w2.T
 
         self.student_config = deepcopy(self.student_config)
@@ -354,18 +361,18 @@ class NetworkMorphisms(object):
         self.student_config[relu1]['inbound_nodes'] = [bn1]
 
         next_nodes_index = self.get_next_nodes(relu_index)
-        self.replace_student_node_inbound(nodes_list, next_nodes_index, relu_name, relu1)
+        self.replace_student_node_inbound(nodes_list, next_nodes_index, relu_name, relu1)# 修改前序节点
 
         student_w = torch.zeros((filters, filters, kh, kw))
-        for i in range(filters):
+        for i in range(filters):# 使得维持恒等映射
             student_w[i, i, (kh - 1) // 2, (kw - 1) // 2] = 1.
         student_w = student_w + np.random.normal(scale=student_w.std() * 0.01, size=student_w.shape)
         student_weight[conv1 + '.weight'] = student_w
         student_weight[conv1 + '.bias'] = torch.zeros(student_weight[node_name + '.bias'].shape)
-        student_weight[bn1 + '.weight'] = student_weight[bn_name + '.weight']
-        student_weight[bn1 + '.bias'] = student_weight[bn_name + '.bias']
-        student_weight[bn1 + '.running_mean'] = student_weight[bn_name + '.running_mean']
-        student_weight[bn1 + '.running_var'] = student_weight[bn_name + '.running_var']
+        student_weight[bn1 + '.weight'] = student_weight[bn_name + '.weight'] #? 
+        student_weight[bn1 + '.bias'] = student_weight[bn_name + '.bias']# ?
+        student_weight[bn1 + '.running_mean'] = student_weight[bn_name + '.running_mean']# ?
+        student_weight[bn1 + '.running_var'] = student_weight[bn_name + '.running_var']# ?
         self.student = GenerateNet(self.student_config)
 
         self.student.load_state_dict(student_weight)
@@ -390,9 +397,9 @@ class NetworkMorphisms(object):
 
         lambda1 = self.generate_node_name('lambda')
         self.student_config[lambda1] = {'config': '', 'inbound_nodes': [new_relu_name]}
-
+        # ? 构成skip，这个lambda应该连接在new_conv_name的前一个节点
         lambda2 = self.generate_node_name('lambda')
-        self.student_config[lambda2] = {'config': '', 'inbound_nodes': [new_conv_name]}
+        self.student_config[lambda2] = {'config': '', 'inbound_nodes': [new_conv_name]}# self.student_config[lambda2] = {'config': '', 'inbound_nodes': self.get_previous_node(new_conv_name)}
 
         add1 = self.generate_node_name('add')
         self.student_config[add1] = {'config': '', 'inbound_nodes': [lambda1, lambda2]}
@@ -408,7 +415,7 @@ class NetworkMorphisms(object):
 
         self.student = GenerateNet(self.student_config)
         self.student.load_state_dict(student_weight)
-
+        # ? 为什么change_teacher=False
         if change_teacher:
             self.change_teacher(student_weight)
 
@@ -524,7 +531,7 @@ class NetworkMorphisms(object):
                 fifth = self.get_next_nodes(fourth[0])
                 if len(fifth) == 1 and 'fc' in nodes_list[fifth[0]][0]:
                     wider2net_conv2d_fc.append(i)
-            if 'fc' in nodes_list[fourth[0]]:
+            if 'fc' in nodes_list[fourth[0]]: # ? if 'fc' in nodes_list[fourth[0]][0]
                 wider2net_conv2d_fc.append(i)
 
         for i, element in enumerate(nodes_list):
@@ -586,8 +593,23 @@ class NetworkMorphisms(object):
     def plot_model(self, folder):
         if not os.path.isdir(folder):
             os.mkdir(folder)
+        # onnx is a standard to save model, so we can transfer it between different platforms or frames
         torch.onnx.export(self.teacher, torch.rand(1, self.in_channels, self.picture_size[0], self.picture_size[1]),
                           folder + 'model.onnx')
+    
+    def get_next_nodes(self, node_index, teacher=True):
+        nodes_list = self.get_nodes_list(teacher=teacher)
+        next_node = []
+        for i in range(1, len(nodes_list)):
+            if nodes_list[node_index][0] in nodes_list[i][1:]:
+                next_node.append(i)
+        return list(next_node)
+    def get_previous_node(self,node_name,teacher=True):
+        nodes_list=self.get_nodes_list(teacher=teacher)
+        for node in nodes_list:
+            if node[0]==node_name:
+                return node[1:]
+        return None
 
 # if __name__ == '__main__':
 #     model = SEModel(se_init_config)
