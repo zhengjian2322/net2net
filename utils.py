@@ -20,7 +20,6 @@ class GenerateNet(nn.Module):
         self.get_linear_from_dict = lambda x: nn.Linear(x['input_size'], x['output_size'])
         self.get_maxpooling_from_dict = lambda x: nn.MaxPool2d(kernel_size=x['kernel_size'], stride=x['stride'])
         self._add_model_from_dict()
-
         for node_name in self.net_config:
             self.node_list.append([node_name] + self.net_config[node_name]['inbound_nodes'])
 
@@ -50,6 +49,7 @@ class GenerateNet(nn.Module):
                 inbound_nodes = node[1:]
                 if set(inbound_nodes) <= set(layer_out.keys()):
                     if 'add' in node_name:
+                        # ?len(inbound_nodes==0) => len(inbound_nodes)==0
                         assert len(inbound_nodes) == 2 or len(inbound_nodes == 0), ValueError('Inbound_nodes error')
                         layer_out[node_name] = layer_out[inbound_nodes[0]] + layer_out[inbound_nodes[1]]
                     elif 'concat' in node_name:
@@ -60,6 +60,7 @@ class GenerateNet(nn.Module):
                         out = layer_out[inbound_nodes[0]]
                         out = out.view(out.size()[0], -1)
                         layer_out[node_name] = layers[node_name](out)
+                    # lambda?  X0.5 这是add的前序两个节点，因此需要乘以0.5，等价于调整前边权重参数
                     elif 'lambda' in node_name:
                         out = layer_out[inbound_nodes[0]]
                         layer_out[node_name] = 0.5 * out
